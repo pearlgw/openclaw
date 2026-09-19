@@ -1,8 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
 import type {
   PluginStateCompareIntent,
+  PluginStateCompareResult,
   PluginStateKeyedStore,
+  PluginStateObservation,
 } from "openclaw/plugin-sdk/plugin-state-runtime";
 import {
   getFileLockProcessStartTime,
@@ -23,6 +26,31 @@ const SHORT_TERM_LOCK_STALE_MS = 60_000;
 const MEMORY_WORKSPACE_LOCK_RETRY_DELAY_MS = 40;
 const inProcessMemoryWorkspaceLocks = new KeyedAsyncQueue();
 const activeMemoryWorkspaceLockOwners = new Map<string, string>();
+type MemoryWorkspaceLockReceipt = {
+  key: string;
+  entry: ShortTermLockEntry;
+  observation: PluginStateObservation<ShortTermLockEntry>;
+};
+const pendingMemoryWorkspaceLockReleases = new Map<string, MemoryWorkspaceLockReceipt>();
+
+function retainMemoryWorkspaceLockRelease(receipt: MemoryWorkspaceLockReceipt): void {
+  const now = Date.now();
+  for (const [owner, pending] of pendingMemoryWorkspaceLockReleases) {
+    if (now - pending.entry.acquiredAt > SHORT_TERM_LOCK_STALE_MS) {
+      pendingMemoryWorkspaceLockReleases.delete(owner);
+    }
+  }
+  if (now - receipt.entry.acquiredAt > SHORT_TERM_LOCK_STALE_MS) {
+    return;
+  }
+  pendingMemoryWorkspaceLockReleases.set(receipt.entry.owner, receipt);
+  if (pendingMemoryWorkspaceLockReleases.size > SHORT_TERM_LOCK_MAX_ENTRIES) {
+    const oldest = pendingMemoryWorkspaceLockReleases.keys().next().value;
+    if (oldest !== undefined) {
+      pendingMemoryWorkspaceLockReleases.delete(oldest);
+    }
+  }
+}
 
 type MemoryWorkspaceLease = { key: string; active: boolean };
 type MemoryWorkspaceLockScope = {
@@ -109,6 +137,7 @@ export async function deleteShortTermLockEntryIfCurrent(
   lockStore: PluginStateKeyedStore<ShortTermLockEntry>,
   lockKey: string,
   expected: ShortTermLockEntry,
+  initialObservation?: PluginStateObservation<ShortTermLockEntry>,
 ): Promise<boolean> {
   if (!lockStore.observe || !lockStore.compareAndApply) {
     throw new Error("memory-core short-term lock store requires atomic comparisons");
@@ -123,7 +152,7 @@ export async function deleteShortTermLockEntryIfCurrent(
         ? "delete"
         : "keep",
   });
-  let observation = await lockStore.observe(lockKey);
+  let observation = initialObservation ?? (await lockStore.observe(lockKey));
   while (true) {
     const result = await lockStore.compareAndApply(
       lockKey,
@@ -172,32 +201,68 @@ export async function withMemoryWorkspaceLock<T>(
     maxEntries: SHORT_TERM_LOCK_MAX_ENTRIES,
   });
   return await inProcessMemoryWorkspaceLocks.enqueue(lockKey, async () => {
+    if (!lockStore.observe || !lockStore.compareAndApply) {
+      throw new Error("memory-core short-term lock store requires atomic comparisons");
+    }
     const startedAt = Date.now();
 
     while (true) {
-      const acquiredAt = Date.now();
-      const ownerStartTime = getFileLockProcessStartTime(process.pid);
-      const lockEntry: ShortTermLockEntry = {
-        owner: `${process.pid}:${acquiredAt}`,
-        acquiredAt,
-        ...(ownerStartTime === null ? {} : { ownerStartTime }),
-      };
-      const acquired = await lockStore.registerIfAbsent(lockKey, lockEntry);
-      if (acquired) {
-        const lease = { key: lockKey, active: true };
-        activeMemoryWorkspaceLockOwners.set(lockKey, lockEntry.owner);
+      const observation = await lockStore.observe(lockKey);
+      const existing = observation.value;
+      if (existing === undefined) {
+        const ownerStartTime = getFileLockProcessStartTime(process.pid);
+        const lockEntry: ShortTermLockEntry = {
+          owner: `${process.pid}:${randomUUID()}`,
+          acquiredAt: Date.now(),
+          ...(ownerStartTime === null ? {} : { ownerStartTime }),
+        };
+        const receipt = { key: lockKey, entry: lockEntry, observation };
+        let acquired: PluginStateCompareResult<ShortTermLockEntry>;
         try {
-          return await runWorkspaceLockScope(lease, task);
-        } finally {
-          lease.active = false;
-          activeMemoryWorkspaceLockOwners.delete(lockKey);
-          await deleteShortTermLockEntryIfCurrent(lockStore, lockKey, lockEntry).catch(() => false);
+          acquired = await lockStore.compareAndApply(lockKey, observation.comparison, {
+            operation: "update",
+            action: "set",
+            value: lockEntry,
+          });
+        } catch (error) {
+          // Worker rejection joins native settlement; the task has not started.
+          retainMemoryWorkspaceLockRelease(receipt);
+          throw error;
         }
-      }
-
-      const existing = await lockStore.lookup(lockKey);
-      if (existing && isShortTermLockStealable(lockKey, existing, Date.now())) {
-        if (await deleteShortTermLockEntryIfCurrent(lockStore, lockKey, existing)) {
+        if (acquired.status === "applied") {
+          const lease = { key: lockKey, active: true };
+          activeMemoryWorkspaceLockOwners.set(lockKey, lockEntry.owner);
+          try {
+            return await runWorkspaceLockScope(lease, task);
+          } finally {
+            lease.active = false;
+            activeMemoryWorkspaceLockOwners.delete(lockKey);
+            try {
+              await deleteShortTermLockEntryIfCurrent(lockStore, lockKey, lockEntry, observation);
+            } catch {
+              retainMemoryWorkspaceLockRelease(receipt);
+            }
+          }
+        }
+      } else {
+        const pending = pendingMemoryWorkspaceLockReleases.get(existing.owner);
+        if (pending && Date.now() - pending.entry.acquiredAt > SHORT_TERM_LOCK_STALE_MS) {
+          pendingMemoryWorkspaceLockReleases.delete(existing.owner);
+        } else if (pending?.key === lockKey && pending.entry.acquiredAt === existing.acquiredAt) {
+          // The acquisition token fences cleanup to its original physical store.
+          await deleteShortTermLockEntryIfCurrent(
+            lockStore,
+            lockKey,
+            pending.entry,
+            pending.observation,
+          );
+          pendingMemoryWorkspaceLockReleases.delete(existing.owner);
+          continue;
+        }
+        if (
+          isShortTermLockStealable(lockKey, existing, Date.now()) &&
+          (await deleteShortTermLockEntryIfCurrent(lockStore, lockKey, existing, observation))
+        ) {
           continue;
         }
       }
