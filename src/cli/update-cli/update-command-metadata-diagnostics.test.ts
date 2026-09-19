@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { expect, it, vi } from "vitest";
 import * as nodeRuntimeDiagnostics from "../../commands/node-runtime-diagnostics.js";
 import * as packageMetadata from "../../infra/update-check-package-target.js";
 import * as updateCheck from "../../infra/update-check.js";
 import { prepareUpdateFailureReport } from "../../infra/update-failure-report-prepare.js";
 import * as updateGlobal from "../../infra/update-global.js";
+import * as ledger from "../../infra/update-run-ledger.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
@@ -19,6 +21,68 @@ import * as commandRun from "./update-command-run.js";
 import { updateCommand } from "./update-command.js";
 
 const { fixture } = installFreshUpdateFixture();
+it.each([false, true])(
+  "reports an unexpected target-resolution exception with diagnostic write failure=%s",
+  async (diagnosticWriteFails) => {
+    openOpenClawStateDatabase();
+    const detail =
+      "Target response was invalid for alice@example.com host=private-gateway on 10.20.30.40 registry.private.example token=synthetic-secret at '/home/operator/private/npmrc'";
+    const error = new TypeError(
+      diagnosticWriteFails ? "" : detail,
+      diagnosticWriteFails ? { cause: new Error(detail) } : undefined,
+    );
+    error.name = "PrivateTenantError";
+    error.stack = `${error.name}: ${error.message}\n    at lookup (/home/operator/node_modules/dependency/index.js:2:3)\n    at privatePlugin (/home/operator/private-project/src/private-plugin.ts:4:3)\n    at resolveTargetVersion (${path.resolve("src/cli/update-cli/shared.ts")}:101:9)`;
+    vi.spyOn(shared, "resolveTargetVersion").mockRejectedValueOnce(error);
+    if (diagnosticWriteFails) {
+      vi.spyOn(ledger, "recordUpdateRunVerification").mockImplementationOnce(() => {
+        throw Object.assign(new Error("diagnostic ledger is read-only"), {
+          code: "SQLITE_READONLY",
+        });
+      });
+    }
+
+    await expect(
+      updateCommand({ tag: "2026.9.2", dryRun: true, json: true, restart: false }),
+    ).rejects.toBe(error);
+    const recordedRun = ledger.listUpdateRuns()[0];
+    expect(recordedRun).toBeDefined();
+    const report = await prepareUpdateFailureReport({
+      attemptId: recordedRun!.runId,
+      recordedRun,
+      result: { status: "error", mode: "unknown", steps: [], durationMs: 0 },
+    });
+    expect(report.body).toContain("Failed phase: target-resolution");
+    expect(report.body).toContain("Update mode: package");
+    expect(report.body).toContain("Update target: 2026.9.2");
+    expect(report.body).toContain("Update action: CLI command: openclaw update");
+    expect(report.body).toContain("Installation method: npm-global");
+    expect(report.body).toContain("TypeError");
+    expect(report.body).toContain("Target response was invalid");
+    expect(report.body).toContain("src/cli/update-cli/shared.ts:101:9");
+    if (diagnosticWriteFails) {
+      expect(defaultRuntime.error).toHaveBeenCalledWith(
+        expect.stringContaining("Update recovery diagnostics could not be recorded"),
+      );
+    } else {
+      expect(report.body).toContain("Rollback outcome: not needed");
+    }
+    for (const value of [
+      "synthetic-secret",
+      "/home/operator",
+      "registry.private.example",
+      "alice",
+      "private-gateway",
+      "10.20.30.40",
+      "private-plugin",
+      "PrivateTenantError",
+    ]) {
+      expect(report.body).not.toContain(value);
+      expect(JSON.stringify(recordedRun)).not.toContain(value);
+    }
+  },
+);
+
 const privateDiagnostic = "registry.internal.example /private/operator/npmrc";
 const cases = [
   {

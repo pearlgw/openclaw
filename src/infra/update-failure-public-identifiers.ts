@@ -13,7 +13,10 @@ import type { UpdateFailureFact } from "./update-failure-facts.js";
 import { UPDATE_PREFLIGHT_DETAILS } from "./update-preflight-details.js";
 import { updateRecoverySchema } from "./update-recovery.js";
 
-type PublicFailureIdentifiers = Pick<UpdateFailureFact, "check" | "code" | "pluginId">;
+type PublicFailureIdentifiers = Pick<
+  UpdateFailureFact,
+  "check" | "code" | "pluginId" | "errorName"
+>;
 
 // Fixed labels emitted by the canary, finalizer, package runner, and service verifier.
 const CANARY_CHECKS = ["snapshot", "config", "plugins", "runtime", "startup", "readiness"] as const;
@@ -25,6 +28,9 @@ const NATIVE_CHECKS = new Set<string>([
   "config-write",
   "preflight",
   "installation-inspection",
+  "target-resolution",
+  "git update",
+  "update",
   "targetConfigValidation",
   "configSnapshot",
   "targetConfigConvergence",
@@ -72,6 +78,12 @@ const PUBLIC_CODES = new Set<string>([
   "URIError",
   "EvalError",
   "AggregateError",
+  "ERR_SQLITE_ERROR",
+  "SQLITE_BUSY",
+  "SQLITE_LOCKED",
+  "SQLITE_READONLY",
+  "SQLITE_IOERR",
+  "SQLITE_FULL",
   "command-failed",
   "doctor-failed",
   "global-install-failed",
@@ -156,7 +168,7 @@ export async function preparePublicUpdateFailureIdentifiers(): Promise<void> {
   await Promise.allSettled([loadPublicDoctorCheckIds(), loadPublicPluginIds()]);
 }
 
-function isPublicCode(code: string): boolean {
+export function isPublicUpdateFailureCode(code: string): boolean {
   return (
     PUBLIC_CODES.has(code) ||
     isServiceInspectionReason(code) ||
@@ -169,7 +181,7 @@ export async function projectPublicUpdateFailureIdentifiers(
   fact: PublicFailureIdentifiers,
 ): Promise<PublicFailureIdentifiers> {
   // Admission failures use their reason code as the check ID.
-  const nativeCheck = NATIVE_CHECKS.has(fact.check) || isPublicCode(fact.check);
+  const nativeCheck = NATIVE_CHECKS.has(fact.check) || isPublicUpdateFailureCode(fact.check);
   // Unavailable metadata cannot establish that an identifier is public.
   const [doctorIds, pluginIds] = await Promise.all([
     nativeCheck ? undefined : loadPublicDoctorCheckIds().catch(() => undefined),
@@ -177,7 +189,13 @@ export async function projectPublicUpdateFailureIdentifiers(
   ]);
   return {
     check: nativeCheck || doctorIds?.has(fact.check) ? fact.check : "[redacted-check]",
-    code: isPublicCode(fact.code) ? fact.code : "[redacted-code]",
+    code: isPublicUpdateFailureCode(fact.code)
+      ? fact.code
+      : fact.errorName
+        ? isPublicUpdateFailureCode(fact.errorName)
+          ? fact.errorName
+          : "[redacted-error-class]"
+        : "[redacted-code]",
     ...(fact.pluginId
       ? { pluginId: pluginIds?.has(fact.pluginId) ? fact.pluginId : "[redacted-plugin]" }
       : {}),

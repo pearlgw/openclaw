@@ -1,8 +1,12 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { z } from "zod";
 import { resolveStateDir } from "../config/paths.js";
 import { redactSupportDiagnosticLine } from "../logging/diagnostic-support-redaction.js";
 import { extractErrorCode, formatErrorMessage, readErrorName } from "./errors.js";
+import { resolveOpenClawPackageRootSync } from "./openclaw-root.js";
+import { isPublicUpdateFailureCode } from "./update-failure-public-identifiers.js";
 import type { UpdateFailureFactSchema } from "./update-run-schema.js";
 
 export type UpdateFailureFact = z.infer<typeof UpdateFailureFactSchema>;
@@ -12,11 +16,52 @@ export function createUpdateErrorFact(
   error: unknown,
   env: NodeJS.ProcessEnv = process.env,
 ): UpdateFailureFact {
+  const name = error instanceof Error ? error.constructor.name : readErrorName(error);
+  const errorName = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/u.test(name) ? name : "Error";
+  const code = extractErrorCode(error);
+  let root: string | null = null;
+  try {
+    root = resolveOpenClawPackageRootSync({ moduleUrl: import.meta.url });
+  } catch {
+    // Unavailable source provenance must not replace the original exception.
+  }
+  const prefixes = root
+    ? [`${root.replaceAll("\\", "/")}/`, pathToFileURL(`${root}${path.sep}`).href]
+    : [];
+  const location =
+    error instanceof Error
+      ? error.stack
+          ?.split("\n")
+          .slice(1)
+          .flatMap((frame) => {
+            const file = /((?:file:\/\/)?(?:\/|[A-Z]:[\\/])[^()\r\n]+:\d+:\d+)\)?$/u
+              .exec(frame)?.[1]
+              ?.replaceAll("\\", "/");
+            const prefix = prefixes.find((candidate) => file?.startsWith(candidate));
+            const local = prefix && file ? path.posix.normalize(file.slice(prefix.length)) : null;
+            // Private plugin and dependency directories are not public application locations.
+            if (!local || local.includes("/node_modules/")) {
+              return [];
+            }
+            return (
+              /^((?:src|dist|packages|extensions)\/[A-Za-z0-9_./-]+:\d+:\d+)$/u.exec(local)?.[1] ??
+              []
+            );
+          })[0]
+      : undefined;
   return createUpdateFailureFact(
     {
       check,
-      code: extractErrorCode(error) || readErrorName(error) || "Error",
-      message: formatErrorMessage(error),
+      code: code && isPublicUpdateFailureCode(code) ? code : errorName,
+      errorName,
+      location: location ?? null,
+      message: formatErrorMessage(
+        error instanceof Error && !error.message
+          ? new Error(isPublicUpdateFailureCode(errorName) ? errorName : "[redacted-error-class]", {
+              cause: error,
+            })
+          : error,
+      ),
     },
     env,
   );
@@ -29,10 +74,33 @@ export function createUpdateFailureFact(
 ): UpdateFailureFact {
   const context = { env, stateDir: resolveStateDir(env) };
   const line = (value: string, limit: number) => redactSupportDiagnosticLine(value, context, limit);
+  // Redact credentials and complete email addresses before replacing their host suffixes.
+  const diagnostic = fact.message ? line(fact.message, Number.MAX_SAFE_INTEGER) : undefined;
+  const message = fact.errorName
+    ? diagnostic
+        ?.replace(
+          /\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z][a-zA-Z0-9-]*(?::\d+)?\b|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b|(?<!\w)(?:[A-Fa-f0-9]{0,4}:){2,}[A-Fa-f0-9:.%]*/gu,
+          "[redacted-host]",
+        )
+        .replace(
+          /\b(host(?:name)?|server|endpoint)\s*[=:]\s*["']?[A-Za-z0-9-]+["']?/giu,
+          "$1=[redacted-host]",
+        )
+    : diagnostic;
   return {
     check: line(fact.check, 128),
     code: line(fact.code, 80),
-    ...(fact.message ? { message: line(fact.message, 200) } : {}),
+    ...(message ? { message: line(message, 200) } : {}),
+    ...(fact.errorName ? { errorName: line(fact.errorName, 80) } : {}),
+    ...(fact.location !== undefined
+      ? {
+          location:
+            fact.location &&
+            /^(?:src|dist|packages|extensions)\/[A-Za-z0-9_./-]+:\d+:\d+$/u.test(fact.location)
+              ? line(fact.location, 160)
+              : null,
+        }
+      : {}),
     ...(fact.affectedKey ? { affectedKey: line(fact.affectedKey, 128) } : {}),
     ...(fact.pluginId ? { pluginId: line(fact.pluginId, 80) } : {}),
   };

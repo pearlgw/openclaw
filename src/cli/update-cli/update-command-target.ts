@@ -28,7 +28,7 @@ import {
   type ResolvedGlobalInstallTarget,
 } from "../../infra/update-global.js";
 import { createUpdatePreflightFailure } from "../../infra/update-preflight-details.js";
-import { recordUpdateRunStep } from "../../infra/update-run-ledger.js";
+import { recordUpdateRunPhase, recordUpdateRunStep } from "../../infra/update-run-ledger.js";
 import { updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
 import {
   describeUpdateInstallRoot,
@@ -315,6 +315,14 @@ export async function resolveUpdateCommandTarget(
             throw new UnreportedUpdateAdmissionOutcome(report, { exitCode: 0 });
           });
           packageManager = manager;
+          if (opts.run) {
+            recordUpdateRunPhase(
+              opts.run.runId,
+              "requested",
+              { target: { kind: updateInstallKind, tag, installationMethod: `${manager}-global` } },
+              { env: opts.run.env },
+            );
+          }
           packageInstallTarget = await resolveGlobalInstallTarget({
             manager,
             runCommand: runCommandWithTimeout,
@@ -360,6 +368,22 @@ export async function resolveUpdateCommandTarget(
             await refuseUpdate("npm lifecycle policy preflight", npmLifecycleGate.error);
             return undefined;
           }
+        }
+        if (opts.run) {
+          recordUpdateRunStep(
+            opts.run.runId,
+            { step: "installation-inspection", status: "completed", endedAtMs: Date.now() },
+            { env: opts.run.env },
+          );
+          recordUpdateRunPhase(
+            opts.run.runId,
+            "requested",
+            {
+              target: { kind: updateInstallKind, tag },
+              step: { step: "target-resolution", status: "in_progress", startedAtMs: Date.now() },
+            },
+            { env: opts.run.env },
+          );
         }
         const npmMetadataCommand =
           packageInstallTarget?.manager === "npm" ? packageInstallTarget.command : undefined;
@@ -461,6 +485,26 @@ export async function resolveUpdateCommandTarget(
         }
       }
 
+      if (opts.run) {
+        recordUpdateRunPhase(
+          opts.run.runId,
+          "requested",
+          {
+            target: {
+              kind: updateInstallKind,
+              tag,
+              ...(targetVersion ? { version: targetVersion } : {}),
+              ...(updateInstallKind === "git" ? { installationMethod: "git-checkout" } : {}),
+            },
+            step: {
+              step: updateInstallKind === "git" ? "installation-inspection" : "target-resolution",
+              status: "completed",
+              endedAtMs: Date.now(),
+            },
+          },
+          { env: opts.run.env },
+        );
+      }
       // No-op updates need no candidate snapshot; package-space warnings remain advisory above.
       if (updateInstallKind === "package" && !packageAlreadyCurrent && !opts.dryRun) {
         const env = opts.run?.env ?? process.env;

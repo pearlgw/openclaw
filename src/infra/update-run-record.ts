@@ -140,6 +140,12 @@ export function finishUpdateRunRecord(
     }
   }
   record.status = result.status;
+  if (result.status === "rolled-back") {
+    record.verification.rollbackOutcome = {
+      status: "succeeded",
+      reason: "The recovery owner completed previous-generation restoration",
+    };
+  }
   record.phase = "finished";
   record.reason = result.reason ?? (result.status === "failed" ? record.reason : null);
   record.finishedAtMs = now;

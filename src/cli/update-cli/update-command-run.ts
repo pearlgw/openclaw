@@ -28,6 +28,7 @@ import {
   type DevUpdateTarget,
   UPDATE_DEV_TARGET_REF_ENV,
 } from "../../infra/update-dev-target.js";
+import { createUpdateErrorFact } from "../../infra/update-failure-facts.js";
 import {
   createFreeBsdPkgOwnershipInspection,
   type FreeBsdPkgOwnershipInspection,
@@ -43,6 +44,7 @@ import {
   resolveManagedUpdateRequester,
 } from "../../infra/update-requester-authority.js";
 import { normalizeControlPlaneUpdateResult } from "../../infra/update-restart-sentinel-payload.js";
+import { recordUpdateRunRecoveryDiagnostics } from "../../infra/update-run-diagnostics.js";
 import { readUpdateRunDriver } from "../../infra/update-run-driver.js";
 import {
   adoptUpdateRun,
@@ -53,6 +55,7 @@ import {
   heartbeatUpdateRun,
   recordUpdateRunPhase,
   recordUpdateRunStep,
+  recordUpdateRunVerification,
 } from "../../infra/update-run-ledger.js";
 import type { UpdateRunRecord, UpdateRunStep } from "../../infra/update-run-record.js";
 import { assertUpdateRecoveryAdmission } from "../../infra/update-run-recovery-admission.js";
@@ -168,6 +171,7 @@ export function assertUpdatePackageActivationAdmission(
 export async function admitUpdateCommandRun(params: {
   opts: UpdateCommandOptions;
   root: string;
+  installKind?: "git" | "package" | "unknown";
   invocationCwd?: string;
   pkgOwnership?: FreeBsdPkgOwnershipInspection;
   initialization?: {
@@ -227,12 +231,26 @@ export async function admitUpdateCommandRun(params: {
       origin: { driver },
       supersedeStaleIdentityless:
         !env[UPDATE_RUN_ID_ENV]?.trim() && env[POST_CORE_UPDATE_ENV] !== "1",
-      target: { channel: params.opts.channel, tag: params.opts.tag },
+      target: {
+        channel: params.opts.channel,
+        tag: params.opts.tag,
+        ...(params.installKind && params.installKind !== "unknown"
+          ? { kind: params.installKind }
+          : {}),
+        ...(params.installKind === "git" ? { installationMethod: "git-checkout" } : {}),
+      },
       before: { version: VERSION },
     },
     ledgerOptions,
   );
   const record = adoptUpdateRun(created.runId, ledgerOptions);
+  if (params.installKind) {
+    recordUpdateRunStep(
+      record.runId,
+      { step: "installation-inspection", status: "in_progress" },
+      ledgerOptions,
+    );
+  }
   const requester = resolveManagedUpdateRequester(record.origin.requester);
   const requesterAuthority = requester
     ? await createManagedUpdateRequesterAuthority(requester, env)
@@ -324,11 +342,31 @@ export function failUpdateCommandRun(
   if (active?.status !== "running") {
     return;
   }
+  const step =
+    active.steps.findLast((entry) => entry.status === "in_progress")?.step ?? active.phase;
   recordUpdateRunStep(
     run.runId,
-    { step: active.phase, status: "failed", detail: formatErrorMessage(error) },
+    { step, status: "failed", failureFacts: [createUpdateErrorFact(step, error, run.env)] },
     options,
   );
+  if (!active.verification.rollbackOutcome) {
+    recordUpdateRunRecoveryDiagnostics(
+      run.runId,
+      (recorded) => ({
+        rollbackOutcome:
+          recorded.rollbackOutcome ??
+          (active.phase === "requested"
+            ? { status: "not-needed", reason: "Update admission failed before package mutation" }
+            : {
+                status: "not-attempted",
+                reason:
+                  "CLI unwind does not attempt package rollback after an unexpected exception",
+              }),
+      }),
+      defaultRuntime.error,
+      options,
+    );
+  }
   finishUpdateRun(run.runId, { status: "failed", reason: "update-failed" }, options);
 }
 
@@ -352,6 +390,9 @@ export function createUpdateRunProgress(
   };
   return {
     pendingSteps,
+    onRollbackOutcome: (rollbackOutcome) => {
+      recordUpdateRunVerification(run.runId, { rollbackOutcome }, { env: run.env });
+    },
     onHeartbeat() {
       if (!deferred) {
         heartbeatUpdateRun(run.runId, driver, { env: run.env });
@@ -442,6 +483,17 @@ export function completeUpdateCommandRun(
       { before: result.before, after: result.after },
       recordOptions,
     );
+    if (result.recovery || result.rollbackOutcome) {
+      recordUpdateRunRecoveryDiagnostics(
+        run.runId,
+        {
+          ...(result.recovery ? { recovery: result.recovery } : {}),
+          ...(result.rollbackOutcome ? { rollbackOutcome: result.rollbackOutcome } : {}),
+        },
+        defaultRuntime.error,
+        recordOptions,
+      );
+    }
   }
   for (const step of result.steps.flatMap(updateRunStepsFromResultStep)) {
     recordUpdateRunStep(run.runId, step, recordOptions);

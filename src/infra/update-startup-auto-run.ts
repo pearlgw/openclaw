@@ -9,6 +9,7 @@ import {
 import { resolveGatewayRestartDeferralTimeoutMs } from "./restart.js";
 import { detectRespawnSupervisor } from "./supervisor-markers.js";
 import type { TrackedDevUpdateTarget } from "./update-dev-target.js";
+import { createUpdateErrorFact } from "./update-failure-facts.js";
 import {
   buildManagedServiceHandoffUnavailableMessage,
   cancelManagedServiceUpdateHandoff,
@@ -16,7 +17,7 @@ import {
   startManagedServiceUpdateHandoff,
   transferManagedServiceUpdateHandoff,
 } from "./update-managed-service-handoff.js";
-import { finishUpdateRun } from "./update-run-ledger.js";
+import { finishUpdateRun, recordUpdateRunPhase, recordUpdateRunStep } from "./update-run-ledger.js";
 import type { UpdateRunResult } from "./update-runner.js";
 
 export type AutoUpdateRunResult =
@@ -48,7 +49,7 @@ export async function runAutoUpdateCommand(
     reason: string,
     message: string,
     status: "error" | "skipped" = "error",
-  ): AutoUpdateRunResult => ({
+  ): Exclude<AutoUpdateRunResult, { status: "handoff" }> => ({
     status: "failed",
     result: {
       status,
@@ -78,6 +79,47 @@ export async function runAutoUpdateCommand(
       "skipped",
     );
   }
+  recordUpdateRunPhase(params.runId, "requested", {
+    target: { installationMethod: "managed-service" },
+  });
+  const handoffFailure = (error: unknown): AutoUpdateRunResult => {
+    log.info("automatic update handoff failed", { error: String(error) });
+    const fact = createUpdateErrorFact("managed-service", error);
+    // Cancellation may finish the run; retain its cause before that ownership transition.
+    try {
+      recordUpdateRunStep(params.runId, {
+        step: "managed-service",
+        status: "failed",
+        failureFacts: [fact],
+      });
+    } catch (recordingError) {
+      const diagnostic = createUpdateErrorFact("managed-service", recordingError);
+      log.info("automatic update failure diagnostics could not be recorded", {
+        code: diagnostic.code,
+        error: diagnostic.message,
+      });
+    }
+    const code = extractErrorCode(error);
+    const outcome = failure(
+      "managed-service-handoff-failed",
+      `Automatic update handoff failed${code ? ` (${code})` : ""}. Inspect the Gateway log, then run \`${command}\` from a shell to retry.`,
+    );
+    outcome.result.steps = [
+      {
+        name: "managed-service",
+        command: "",
+        cwd: "",
+        durationMs: 0,
+        exitCode: 1,
+        failureFacts: [fact],
+      },
+    ];
+    outcome.result.rollbackOutcome = {
+      status: "not-attempted",
+      reason: "Automatic handoff does not perform package rollback after an exception",
+    };
+    return outcome;
+  };
 
   try {
     params.signal?.throwIfAborted();
@@ -148,8 +190,9 @@ export async function runAutoUpdateCommand(
         }
         params.signal?.throwIfAborted();
       } catch (error) {
+        const outcome = handoffFailure(error);
         await cancelManagedServiceUpdateHandoff(successorOwner);
-        throw error;
+        return outcome;
       }
     } else {
       // A joined helper owns another run; it cannot complete this campaign's admission.
@@ -164,12 +207,6 @@ export async function runAutoUpdateCommand(
       logPath: started.logPath,
     };
   } catch (err) {
-    // Filesystem failures can contain private helper paths; keep the full cause local.
-    log.info("automatic update handoff failed", { error: String(err) });
-    const code = extractErrorCode(err);
-    return failure(
-      "managed-service-handoff-failed",
-      `Automatic update handoff failed${code ? ` (${code})` : ""}. Inspect the Gateway log, then run \`${command}\` from a shell to retry.`,
-    );
+    return handoffFailure(err);
   }
 }
