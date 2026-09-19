@@ -111,16 +111,14 @@ export function buildSessionListParams(options: SessionListOptions = {}): Sessio
   } else if (options.limit > 0) {
     params.limit = Math.floor(options.limit);
   }
-  if (options.includeGlobal !== undefined) {
-    params.includeGlobal = options.includeGlobal;
-  }
-  if (options.includeUnknown !== undefined) {
-    params.includeUnknown = options.includeUnknown;
-  }
-  if (options.configuredAgentsOnly !== undefined) {
-    params.configuredAgentsOnly = options.configuredAgentsOnly;
-  }
-  for (const key of ["excludeSubagents", "excludeCron", "excludeSystem"] as const) {
+  for (const key of [
+    "includeGlobal",
+    "includeUnknown",
+    "configuredAgentsOnly",
+    "excludeSubagents",
+    "excludeCron",
+    "excludeSystem",
+  ] as const) {
     if (options[key] !== undefined) {
       params[key] = options[key];
     }
