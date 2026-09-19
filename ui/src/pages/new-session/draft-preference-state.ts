@@ -252,8 +252,10 @@ export class DraftPreferenceState {
         accepted
           ? ownsConnection() && writer.selection === selection
           : ownsConnection() && this.preferenceScope === scope;
+      // A disconnected controller must still fence work admitted to its Gateway queue.
+      const queued = this.preferenceModeValue !== "local";
       const write = async () => {
-        if (this.preferenceModeValue !== "local") {
+        if (queued) {
           await preferenceLoad;
           if (!client || !isCurrent()) {
             return undefined;
@@ -327,8 +329,7 @@ export class DraftPreferenceState {
         }
       };
       // Local storage is synchronous; Gateway writes outlive the submitting route.
-      const pending =
-        this.preferenceModeValue === "local" ? write() : writer.write.then(write, write);
+      const pending = queued ? writer.write.then(write, write) : write();
       writer.write = pending.then((confirmed) => {
         if (confirmed === false && isCurrent()) {
           showToast({
