@@ -2,7 +2,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { SessionParticipantIdentity } from "../../../packages/gateway-protocol/src/schema/session-participant.js";
 import type { ControlUiNavigationItem } from "../../../src/plugin-sdk/control-ui.js";
 import {
-  isCronSessionKey,
+  isCronSessionDisplayKey,
   isSystemCreatedSessionRow,
 } from "../../../src/shared/session-list-visibility.ts";
 import type { GatewayControlUiPluginTab } from "../api/gateway.ts";
@@ -501,7 +501,7 @@ export function collectPromotedMainChildRows(input: {
       !input.scopedRootKeys.has(row.key) &&
       !isSubagentSessionKey(row.key) &&
       !row.archived &&
-      (input.showCron || !isCronSessionKey(row.key)) &&
+      (input.showCron || !isCronSessionDisplayKey(row.key)) &&
       (input.showSystem || !isSystemCreatedSessionRow(row))
     );
   });

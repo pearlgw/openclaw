@@ -120,6 +120,7 @@ const realGatewayFiles = [
   "chat-tts-supplement.real-gateway",
   "chat-widget-sandbox.real-gateway",
   "command-palette-catalog.real-gateway",
+  "command-palette-search.real-gateway",
   "control-ui-auth-transports",
   "cron-duration-save.real-gateway",
   "desktop-resize.real-gateway",

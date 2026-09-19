@@ -4,7 +4,7 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import {
-  isCronSessionKey,
+  isCronSessionDisplayKey,
   isSystemCreatedSessionRow,
 } from "../../../../src/shared/session-list-visibility.ts";
 import type { GatewayHelloOk } from "../../api/gateway.ts";
@@ -180,7 +180,7 @@ export function sessionMatchesVisibleSessionScope(
     sessionMatchesArchivedFilter(row, options.archivedFilter) &&
     row.kind !== "global" &&
     row.kind !== "unknown" &&
-    (options.showCron === true || !isCronSessionKey(row.key)) &&
+    (options.showCron === true || !isCronSessionDisplayKey(row.key)) &&
     (options.showSystem === true || !isSystemCreatedSessionRow(row)) &&
     (!options.filterByAgent ||
       isSessionKeyTiedToAgent(row.key, options.agentId, options.defaultAgentId))

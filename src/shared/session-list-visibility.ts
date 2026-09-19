@@ -1,7 +1,7 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 
 /** Display/discovery classification; routing validates canonical keys separately. */
-export function isCronSessionKey(key: string): boolean {
+export function isCronSessionDisplayKey(key: string): boolean {
   const normalized = normalizeLowercaseStringOrEmpty(key);
   const parts = normalized.split(":").filter(Boolean);
   return (
@@ -23,7 +23,7 @@ export function isSystemCreatedSessionRow(row: {
   displayName?: string;
   subject?: string;
 }): boolean {
-  if (isCronSessionKey(row.key)) {
+  if (isCronSessionDisplayKey(row.key)) {
     return false;
   }
   if (row.createdActor?.type === "system") {
