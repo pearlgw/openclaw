@@ -132,7 +132,7 @@ describe("cleanupSessionStateForTest", () => {
       .mockImplementation((location, options) => {
         const database = actualOpen(location, options);
         if (options?.readOnly) {
-          readers.set(nodeSqlite.resolveSqliteFilesystemPath(location), database);
+          readers.set(nodeSqlite.resolveNodeSqliteLocation(location), database);
         }
         return database;
       });
@@ -145,12 +145,8 @@ describe("cleanupSessionStateForTest", () => {
         });
         expect(readPersistedAuthProfileStoreRaw(target.agentDir)).toBeNull();
       }
-      const selected = readers.get(
-        nodeSqlite.resolveSqliteFilesystemPath(targets[0]!.databasePath),
-      );
-      const unrelated = readers.get(
-        nodeSqlite.resolveSqliteFilesystemPath(targets[1]!.databasePath),
-      );
+      const selected = readers.get(nodeSqlite.resolveNodeSqliteLocation(targets[0]!.databasePath));
+      const unrelated = readers.get(nodeSqlite.resolveNodeSqliteLocation(targets[1]!.databasePath));
       if (!selected || !unrelated) {
         throw new Error("expected both real pooled auth readers");
       }

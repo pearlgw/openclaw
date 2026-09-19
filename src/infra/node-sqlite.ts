@@ -17,7 +17,7 @@ type NodeSqliteDatabaseOptions = ConstructorParameters<
   typeof import("node:sqlite").DatabaseSync
 >[1];
 
-export function resolveSqliteFilesystemPath(pathname: string): string {
+function resolveSqliteFilesystemPath(pathname: string): string {
   if (process.platform !== "win32") {
     return pathname;
   }
@@ -146,6 +146,20 @@ export function openNodeSqliteDatabase(
   return options === undefined
     ? new sqlite.DatabaseSync(resolvedLocation)
     : new sqlite.DatabaseSync(resolvedLocation, options);
+}
+
+export async function backupNodeSqliteDatabase(
+  source: import("node:sqlite").DatabaseSync,
+  targetPath: string,
+): Promise<number> {
+  // Native backup resolves outside Node's callback scopes, leaving idle awaits asleep.
+  // Remove when supported runtimes checkpoint backup completion themselves.
+  const checkpoint = setInterval(() => {}, 100);
+  try {
+    return await requireNodeSqlite().backup(source, resolveSqliteFilesystemPath(targetPath));
+  } finally {
+    clearInterval(checkpoint);
+  }
 }
 
 /** Compare versions only across reads on the same connection. */

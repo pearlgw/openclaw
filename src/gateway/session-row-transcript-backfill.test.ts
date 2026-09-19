@@ -59,8 +59,8 @@ async function withColdStore(params: BackfillParams, read: () => Promise<void>) 
     .mockImplementation((location, opts) => {
       const database = actualOpen(location, opts);
       if (
-        nodeSqlite.resolveSqliteFilesystemPath(database.location() ?? "") ===
-        nodeSqlite.resolveSqliteFilesystemPath(options.path)
+        nodeSqlite.resolveNodeSqliteLocation(database.location() ?? "") ===
+        nodeSqlite.resolveNodeSqliteLocation(options.path)
       ) {
         opened.push({ database, readOnly: opts?.readOnly === true });
       }
