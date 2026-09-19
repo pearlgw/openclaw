@@ -123,11 +123,15 @@ export function buildSessionListParams(options: SessionListOptions = {}): Sessio
       params[key] = options[key];
     }
   }
-  if (options.includeDerivedTitles === true) {
-    params.includeDerivedTitles = true;
-  }
-  if (options.includeLastMessage === true) {
-    params.includeLastMessage = true;
+  for (const key of [
+    "includeDerivedTitles",
+    "includeLastMessage",
+    "ownerFirst",
+    "involvingMe",
+  ] as const) {
+    if (options[key] === true) {
+      params[key] = true;
+    }
   }
   if (options.archivedFilter === "archived") {
     params.archived = true;
@@ -143,33 +147,17 @@ export function buildSessionListParams(options: SessionListOptions = {}): Sessio
   if (activeMinutes > 0) {
     params.activeMinutes = activeMinutes;
   }
-  const agentId = options.agentId?.trim();
-  const spawnedBy = options.spawnedBy?.trim();
-  const search = options.search?.trim();
-  const ownerId = options.ownerId?.trim();
-  if (options.ownerFirst === true) {
-    params.ownerFirst = true;
-  }
-  if (options.involvingMe === true) {
-    params.involvingMe = true;
+  for (const key of ["agentId", "spawnedBy", "search", "ownerId"] as const) {
+    const value = options[key]?.trim();
+    if (value) {
+      params[key] = value;
+    }
   }
   if (options.boardFace) {
     params.boardFace = options.boardFace;
   }
   if (options.hasBoard !== undefined) {
     params.hasBoard = options.hasBoard;
-  }
-  if (agentId) {
-    params.agentId = agentId;
-  }
-  if (spawnedBy) {
-    params.spawnedBy = spawnedBy;
-  }
-  if (search) {
-    params.search = search;
-  }
-  if (ownerId) {
-    params.ownerId = ownerId;
   }
   if (typeof options.offset === "number" && options.offset > 0) {
     params.offset = Math.floor(options.offset);
