@@ -33,6 +33,8 @@ on:
       - "scripts/plugin-npm-prepared-release.mjs"
       - "scripts/plugin-publication-artifact.mjs"
       - "scripts/plugin-npm-bootstrap-approval.mjs"
+      - "scripts/lib/release-publish-gates.mts"
+      - "scripts/lib/record-shared.mjs"
       - "scripts/release-tooling-identity.d.mts"
       - "scripts/release-tooling-identity.mjs"
       - "scripts/plugin-npm-release-check.ts"
