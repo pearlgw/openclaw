@@ -62,6 +62,11 @@ on:
         description: Approved OpenClaw Release Publish workflow run id
         required: false
         type: string
+      defer_registry_verification:
+        description: Parent release will verify registry visibility after successful publication
+        required: false
+        default: false
+        type: boolean
       release_publish_run_attempt:
         description: Exact approved OpenClaw Release Publish workflow run attempt
         required: false
@@ -1707,6 +1712,7 @@ jobs:
             --tarball "$TARBALL_PATH" --allow-missing true --github-output "$GITHUB_OUTPUT"
 
       - name: Publish with trusted publisher
+        id: oidc_publish
         if: steps.publication_evidence.outputs.publish_route == 'npm-oidc' && steps.npm_package_version.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1810,6 +1816,7 @@ jobs:
               DIRECT_RELEASE_RECOVERY="$direct_recovery" node scripts/validate-release-publish-approval.mjs
 
       - name: Publish approved bootstrap tarball
+        id: bootstrap_publish
         if: steps.publication_evidence.outputs.publish_route == 'npm-token-bootstrap' && steps.npm_package_version.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1871,6 +1878,7 @@ jobs:
 
       - name: Verify immutable npm registry readback
         env:
+          DEFER_VISIBILITY: ${{ inputs.defer_registry_verification && inputs.release_publish_run_id != '' && (steps.oidc_publish.outcome == 'success' || steps.bootstrap_publish.outcome == 'success') }}
           PACKAGE_NAME: ${{ steps.publication_evidence.outputs.package_name }}
           PACKAGE_VERSION: ${{ steps.publication_evidence.outputs.package_version }}
           PUBLISH_ROUTE: ${{ steps.publication_evidence.outputs.publish_route }}
@@ -1883,24 +1891,8 @@ jobs:
           node scripts/plugin-npm-prepared-release.mjs registry \
             --package-name "$PACKAGE_NAME" --version "$PACKAGE_VERSION" \
             --publish-tag "$PUBLISH_TAG" --route "$PUBLISH_ROUTE" \
-            --tarball "$TARBALL_PATH" --allow-missing false
-
-      - name: Verify bootstrap npm dist-tag
-        if: steps.publication_evidence.outputs.publish_route == 'npm-token-bootstrap'
-        env:
-          PACKAGE_NAME: ${{ steps.publication_evidence.outputs.package_name }}
-          PACKAGE_VERSION: ${{ steps.publication_evidence.outputs.package_version }}
-          PUBLISH_TAG: ${{ steps.publication_evidence.outputs.publish_tag }}
-        run: |
-          set -euo pipefail
-          npm view "$PACKAGE_NAME" dist-tags --json --prefer-online |
-            node --input-type=module -e '
-              import { readFileSync } from "node:fs";
-              const tags = JSON.parse(readFileSync(0, "utf8"));
-              if (tags[process.env.PUBLISH_TAG] !== process.env.PACKAGE_VERSION) {
-                throw new Error("Bootstrap dist-tag does not match the approved version; use credential-isolated selector recovery without republishing.");
-              }
-            '
+            --tarball "$TARBALL_PATH" --allow-missing false \
+            --defer-visibility "$DEFER_VISIBILITY"
 
       - name: Record plugin trusted publisher checkpoint
         if: steps.publication_evidence.outputs.publish_route == 'npm-token-bootstrap'
