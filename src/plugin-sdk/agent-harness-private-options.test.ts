@@ -7,7 +7,10 @@ import type {
   EmbeddedRunAttemptParams,
   EmbeddedRunAttemptParamsV2,
 } from "./agent-harness-runtime.js";
-import type { AgentHarnessToolSurfaceRuntimeParams } from "./agent-harness-tool-runtime.js";
+import type {
+  AgentHarnessToolSurfaceRuntime,
+  AgentHarnessToolSurfaceRuntimeParams,
+} from "./agent-harness-tool-runtime.js";
 import { createOpenClawCodingTools } from "./agent-harness.js";
 import type { createAgentHarnessHostCapabilitiesForTest } from "./plugin-test-runtime.js";
 
@@ -33,6 +36,13 @@ describe("agent harness private options", () => {
     expectTypeOf<
       Extract<keyof AgentHarnessToolSurfaceRuntimeParams, PrivateControls>
     >().toEqualTypeOf<never>();
+    expectTypeOf<AgentHarnessToolSurfaceRuntimeParams>().not.toHaveProperty(
+      "forceCodeModeControls",
+    );
+    expectTypeOf<AgentHarnessToolSurfaceRuntime>().not.toHaveProperty("plan");
+    expectTypeOf<
+      NonNullable<Parameters<AgentHarnessToolSurfaceRuntime["compactTools"]>[1]>
+    >().not.toHaveProperty("prepared");
     expectTypeOf<Extract<keyof CodingToolsOptions, PrivateControls>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<keyof HostToolsOptions, PrivateControls>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<keyof HostTestAttempt, PrivateControls>>().toEqualTypeOf<never>();

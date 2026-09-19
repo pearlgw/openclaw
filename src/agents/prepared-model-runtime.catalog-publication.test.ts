@@ -1,11 +1,7 @@
 // Preserve module setup before modules that consume it.
 // oxfmt-ignore
-import {
-  cleanupPreparedModelRuntimeHarness,
-  getPreparedModelRuntimeMocks,
-  resetPreparedModelRuntimeHarness,
-} from "./prepared-model-runtime.test-harness.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { usePreparedModelRuntimeHarness } from "./prepared-model-runtime.test-harness.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -24,10 +20,6 @@ import {
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { sessionChanges } from "../sessions/session-row-changes.js";
 import {
-  createOpenClawTestState,
-  type OpenClawTestState,
-} from "../test-utils/openclaw-test-state.js";
-import {
   recordRuntimeAuthMaterialization,
   revokeRuntimeAuthMaterializations,
 } from "./auth-profiles/runtime-materializations.js";
@@ -40,7 +32,15 @@ import {
 } from "./prepared-model-runtime.js";
 import { registerPreparedModelRuntimePublicationListener } from "./prepared-model-runtime.publication-events.js";
 
-const mocks = getPreparedModelRuntimeMocks();
+const fixture = usePreparedModelRuntimeHarness(
+  { label: "catalog-publication-rows", scenario: "minimal" },
+  () => {
+    projection?.dispose();
+    projection = undefined;
+    vi.restoreAllMocks();
+  },
+);
+const { mocks } = fixture;
 const rowCount = 256;
 const model: ModelCatalogEntry = {
   provider: "custom",
@@ -50,7 +50,6 @@ const model: ModelCatalogEntry = {
   reasoning: false,
   input: ["text"],
 };
-let state: OpenClawTestState;
 let projection: SessionRowProjection | undefined;
 
 // Worker replies are fresh objects, as across the real worker serialization boundary.
@@ -73,7 +72,7 @@ async function setup(preparedMap = false) {
   };
   mocks.configuredAgentIds = ["default"];
   mocks.runPreparedModelCatalogWorker.mockImplementation(async () => catalog());
-  const input = { config, agentId: "default", agentDir: state.agentDir("default") };
+  const input = { config, agentId: "default", agentDir: fixture.state.agentDir("default") };
   let owner = await publishPreparedModelRuntimeSnapshot(input, { catalogMode: "static" });
   await owner.loadFullModelCatalog!({ refresh: true });
   for (let index = 0; index < rowCount; index++) {
@@ -128,18 +127,9 @@ async function setup(preparedMap = false) {
   };
 }
 
-beforeEach(async () => {
-  state = await createOpenClawTestState({ label: "catalog-publication-rows", scenario: "minimal" });
-  await resetPreparedModelRuntimeHarness(state);
+beforeEach(() => {
   // Temporal presentation is separate from materialized row facts.
   vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
-});
-
-afterEach(async ({ task }) => {
-  projection?.dispose();
-  projection = undefined;
-  vi.restoreAllMocks();
-  await cleanupPreparedModelRuntimeHarness(state, task.result?.state === "fail");
 });
 
 describe("catalog publication session rows", () => {
@@ -165,7 +155,7 @@ describe("catalog publication session rows", () => {
     const owner = await publishPreparedModelRuntimeSnapshot(
       {
         config: { agents: { defaults: { model: "custom/synthetic-model" } } },
-        agentDir: state.agentDir("default"),
+        agentDir: fixture.state.agentDir("default"),
       },
       { catalogMode: "static" },
     );
@@ -192,7 +182,7 @@ describe("catalog publication session rows", () => {
     "keeps session rows resident when runtime auth is %s",
     async (action) => {
       const { config, rows, list, initial, readCatalog } = await setup(true);
-      const input = { config, agentId: "default", agentDir: state.agentDir("default") };
+      const input = { config, agentId: "default", agentDir: fixture.state.agentDir("default") };
       const owner = getPreparedModelRuntimeSnapshot(input)!;
       const route = {
         agentDir: input.agentDir,
