@@ -61,7 +61,6 @@ import {
 import {
   containsConfigIncludeDirective,
   hashConfigRaw,
-  rejectConfigNonFiniteNumbers,
   resolveManagedRuntimeEnvBaseline,
 } from "./io.read-helpers.js";
 import { configWriteCommittedSnapshot } from "./io.types.js";
@@ -105,6 +104,7 @@ import {
 } from "./runtime-write-application.js";
 import type { ConfigFileSnapshot, OpenClawConfig } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
+import { rejectConfigNonFiniteNumbers } from "./value-tree.js";
 import {
   captureConfigWriteLockGuard,
   markActiveConfigMutationPath,

@@ -440,6 +440,7 @@ src/config/validation-plugin-registry.ts
 src/config/validation-plugin-rules.ts
 src/config/validation.ts
 src/config/validation.types.ts
+src/config/value-tree.ts
 src/config/version.ts
 src/config/web-search-legacy-provider-keys.ts
 src/config/write-lock.ts
