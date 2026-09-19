@@ -13,6 +13,7 @@ import {
   type UiPreferences,
   type UiSettings,
 } from "./settings.ts";
+import type { CatalogTheme, createThemeCatalog, ThemeCatalogSnapshot } from "./theme-catalog.ts";
 import { startThemeTransition } from "./theme-transition.ts";
 import { resolveTheme, syncThemePaletteStylesheet, type ThemeMode } from "./theme.ts";
 import {
@@ -22,12 +23,17 @@ import {
   syncTypefaceStylesheets,
 } from "./typography.ts";
 
-function applyThemePresentation(settings: UiPreferences): void {
+function applyThemePresentation(settings: UiPreferences, catalogTheme?: CatalogTheme): void {
   if (typeof document === "undefined") {
     return;
   }
   const root = document.documentElement;
-  const resolvedTheme = resolveTheme(settings.theme, settings.themeMode);
+  const dynamic = settings.theme.includes("/");
+  const effectiveTheme = dynamic && !catalogTheme ? "claw" : settings.theme;
+  const mode = catalogTheme?.mode ?? settings.themeMode;
+  const resolvedTheme = resolveTheme(effectiveTheme, mode);
+  root.dataset.themeId = effectiveTheme;
+  root.dataset.themeRequestedId = settings.theme;
   root.dataset.theme = resolvedTheme;
   root.dataset.themeMode = resolvedTheme.endsWith("light") ? "light" : "dark";
   // Plugin semantic styles select on [data-theme-resolved]; keep it in lockstep
@@ -37,11 +43,11 @@ function applyThemePresentation(settings: UiPreferences): void {
   root.classList.toggle("wa-dark", root.dataset.themeMode === "dark");
   root.style.colorScheme = root.dataset.themeMode;
   root.style.setProperty("--control-ui-text-scale", `${(settings.textScale ?? 100) / 100}`);
-  const typefaces = resolveTypefaces(settings.theme, settings.fontUi, settings.fontChat);
+  const typefaces = resolveTypefaces(effectiveTheme, settings.fontUi, settings.fontChat);
   syncTypefaceStylesheets(typefaces);
   applyTypefaceOverrides(settings.fontUi, settings.fontChat);
   applyChatFontSmoothing(typefaces.chat);
-  syncCustomThemeStyleTag(settings.customTheme);
+  syncCustomThemeStyleTag(catalogTheme?.palette ?? settings.customTheme);
   applyControlUiAccent(settings.accent);
   syncControlUiSystemChrome();
 }
@@ -58,6 +64,10 @@ export function createApplicationTheme(
   const listeners = new Set<() => void>();
 
   let presentationGeneration = 0;
+  let catalog: ReturnType<typeof createThemeCatalog> | undefined;
+  let catalogLoading = false;
+  let catalogLoadError: ThemeCatalogSnapshot | undefined;
+  let disposed = false;
   const publish = () => {
     const generation = ++presentationGeneration;
     syncThemePaletteStylesheet(settings.theme, () => {
@@ -65,12 +75,36 @@ export function createApplicationTheme(
       if (generation !== presentationGeneration) {
         return;
       }
-      applyThemePresentation(settings);
+      applyThemePresentation(settings, catalog?.theme(settings.theme));
     });
     // Live preferences cannot wait for a palette download. Presentation keeps
     // its own generation fence; subscribers consume the new snapshot now.
     for (const listener of listeners) {
       listener();
+    }
+  };
+
+  const loadCatalog = async () => {
+    if (disposed || catalog || catalogLoading || gateway.snapshot.phase !== "connected") {
+      return;
+    }
+    catalogLoading = true;
+    try {
+      const { createThemeCatalog } = await import("./theme-catalog.ts");
+      if (!disposed) {
+        catalog = createThemeCatalog(gateway, publish);
+        catalogLoadError = undefined;
+      }
+    } catch (error) {
+      catalogLoadError = {
+        themes: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      catalogLoading = false;
+      if (!disposed) {
+        publish();
+      }
     }
   };
 
@@ -133,14 +167,19 @@ export function createApplicationTheme(
   };
   globalThis.addEventListener?.("storage", onStorage);
   const stopGateway = gateway.subscribe(() => {
+    void loadCatalog();
     if (settings.gatewayUrl !== gateway.connection.gatewayUrl) {
       refresh();
     }
   });
   syncSystemThemeListener();
   publish();
+  void loadCatalog();
 
   return {
+    get catalog() {
+      return catalog?.snapshot ?? catalogLoadError;
+    },
     get settings() {
       return settings;
     },
@@ -148,7 +187,8 @@ export function createApplicationTheme(
       return settings.themeMode;
     },
     get resolvedMode() {
-      return resolveTheme(settings.theme, settings.themeMode).endsWith("light") ? "light" : "dark";
+      const mode = catalog?.theme(settings.theme)?.mode ?? settings.themeMode;
+      return resolveTheme(settings.theme, mode).endsWith("light") ? "light" : "dark";
     },
     get serverSelection() {
       return serverSelection;
@@ -158,10 +198,8 @@ export function createApplicationTheme(
       publish();
     },
     setMode(mode: ThemeMode, element) {
-      const currentSettings = settings;
-      const nextSettings = { ...currentSettings, themeMode: mode };
-      const currentTheme = resolveTheme(currentSettings.theme, currentSettings.themeMode);
-      const nextTheme = resolveTheme(nextSettings.theme, nextSettings.themeMode);
+      const currentTheme = resolveTheme(settings.theme, settings.themeMode);
+      const nextTheme = resolveTheme(settings.theme, mode);
       startThemeTransition({
         nextTheme,
         currentTheme,
@@ -172,11 +210,16 @@ export function createApplicationTheme(
       });
     },
     refresh,
+    retryCatalog() {
+      void (catalog?.refresh() ?? loadCatalog());
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     dispose() {
+      disposed = true;
+      catalog?.dispose();
       stopPreferences();
       globalThis.removeEventListener?.("storage", onStorage);
       stopGateway();
