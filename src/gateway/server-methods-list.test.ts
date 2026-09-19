@@ -226,6 +226,7 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -272,6 +273,7 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
     ]);
   });
 
@@ -447,6 +449,7 @@ describe("listGatewayMethods", () => {
       "mcp.authLogin",
       ...sessionEnvironmentMethods.map(([method]) => method),
       "sessions.setInvolvement",
+      "transcripts.summarize",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
