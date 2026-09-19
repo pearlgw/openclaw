@@ -15,6 +15,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import { isCronRunSessionKey, isSubagentSessionKey } from "../sessions/session-key-utils.js";
 import { sessionActivityTimestamp } from "../shared/session-activity-timestamp.js";
+import { isCronSessionKey, isSystemCreatedSessionRow } from "../shared/session-list-visibility.js";
 import type { SessionOwnerFacetIdentity } from "../shared/session-types.js";
 import type { SynchronousWork } from "../shared/synchronous-work.js";
 import {
@@ -152,6 +153,8 @@ export function* filterSessionEntries(
     const storeKey = target?.storeKey ?? key;
     if (
       isCronRunSessionKey(key) ||
+      (opts.excludeCron === true && isCronSessionKey(key)) ||
+      (opts.excludeSystem === true && isSystemCreatedSessionRow({ ...entry, key })) ||
       (opts.excludeSubagents === true && (isSubagentSessionKey(key) || entry.spawnedBy)) ||
       (!includeGlobal && storeKey === "global") ||
       (!includeUnknown && storeKey === "unknown")

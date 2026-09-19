@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import { isCronSessionKey } from "../../../src/shared/session-list-visibility.ts";
 import {
-  isCronSessionKey,
   resolveChannelSessionInfo,
   resolveSessionDisplayName,
   resolveSessionWorkContext,

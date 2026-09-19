@@ -50,6 +50,7 @@ import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { withSessionListDiagnostics } from "./sessions-list-diagnostics.js";
 import { sessionMaintenanceHandlers } from "./sessions-maintenance.js";
 import { sessionByKeyReadHandlers } from "./sessions-read-by-key.js";
+import { searchProjectedSessionTranscripts } from "./sessions-search-projected.js";
 import { resolveSessionSearchScope } from "./sessions-search-scope.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
@@ -62,6 +63,21 @@ export const sessionReadHandlers: GatewayRequestHandlers = {
     const query = params.query.trim();
     if (!query) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "query must not be empty"));
+      return;
+    }
+    if (params.scope !== undefined) {
+      try {
+        await searchProjectedSessionTranscripts({
+          query,
+          limit: params.limit,
+          scope: params.scope,
+          context,
+          client: client ?? null,
+          onResult: (result) => respond(true, result),
+        });
+      } catch (error) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
+      }
       return;
     }
     const cfg = context.getRuntimeConfig();

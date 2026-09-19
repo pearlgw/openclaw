@@ -1,6 +1,10 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { SessionParticipantIdentity } from "../../../packages/gateway-protocol/src/schema/session-participant.js";
 import type { ControlUiNavigationItem } from "../../../src/plugin-sdk/control-ui.js";
+import {
+  isCronSessionKey,
+  isSystemCreatedSessionRow,
+} from "../../../src/shared/session-list-visibility.ts";
 import type { GatewayControlUiPluginTab } from "../api/gateway.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../api/types.ts";
 import { SIDEBAR_NAV_ROUTES } from "../app-navigation.ts";
@@ -8,7 +12,6 @@ import type { RouteId } from "../app-route-paths.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { listSelectableAgents } from "../lib/agents/display.ts";
 import {
-  isCronSessionKey,
   resolveChannelSessionInfo,
   resolveSessionDisplayName,
   resolveSessionWorkContext,
@@ -20,7 +23,6 @@ import { collectKnownSessionGroups } from "../lib/sessions/grouping.ts";
 import {
   compareSessionRowsByUpdatedAt,
   filterVisibleSessionRows,
-  isSystemCreatedSessionRow,
   resolveSessionNavigation,
   sessionMatchesVisibleSessionScope,
 } from "../lib/sessions/index.ts";

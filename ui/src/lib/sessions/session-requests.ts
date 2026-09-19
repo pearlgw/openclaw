@@ -1,6 +1,7 @@
 import type {
   SessionsDeleteResult,
   SessionsSetInvolvementParams,
+  SessionsListParams,
   SessionsPatchManyParams,
   SessionsPatchManyResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
@@ -103,8 +104,8 @@ function buildTranscriptMutationParams(
   };
 }
 
-export function buildSessionListParams(options: SessionListOptions = {}): Record<string, unknown> {
-  const params: Record<string, unknown> = { ...SESSION_LIST_PARAMS };
+export function buildSessionListParams(options: SessionListOptions = {}): SessionsListParams {
+  const params: SessionsListParams = { ...SESSION_LIST_PARAMS };
   if (options.limit === undefined) {
     params.limit = DEFAULT_SESSION_LIST_QUERY.limit;
   } else if (options.limit > 0) {
@@ -118,6 +119,11 @@ export function buildSessionListParams(options: SessionListOptions = {}): Record
   }
   if (options.configuredAgentsOnly !== undefined) {
     params.configuredAgentsOnly = options.configuredAgentsOnly;
+  }
+  for (const key of ["excludeSubagents", "excludeCron", "excludeSystem"] as const) {
+    if (options[key] !== undefined) {
+      params[key] = options[key];
+    }
   }
   if (options.includeDerivedTitles === true) {
     params.includeDerivedTitles = true;
