@@ -170,6 +170,13 @@ export async function resolveUpdateCommandTarget(
         );
       }
 
+      if (opts.run) {
+        recordUpdateRunStep(
+          opts.run.runId,
+          { step: "installation-inspection", status: "in_progress" },
+          { env: opts.run.env },
+        );
+      }
       if (requestedChannel === "extended-stable" && installKind === "git") {
         await refuseUpdate("unsupported_git_channel");
         return undefined;

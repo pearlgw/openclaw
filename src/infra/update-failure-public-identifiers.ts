@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { PLUGIN_CAPABILITY_CONSENT_REQUIRED } from "../../packages/gateway-protocol/src/capability-consent-error-details.js";
 import { UPDATE_RUN_PHASES } from "../../packages/gateway-protocol/src/update-run-vocabulary.js";
 import { GATEWAY_RESTART_WAIT_OUTCOMES } from "../cli/daemon-cli/restart-health.types.js";
@@ -9,12 +10,12 @@ import {
   SKIPPED_UPDATE_OUTCOMES,
   UPDATE_ENVIRONMENT_FAILURE_REASONS,
 } from "../shared/update-outcome.js";
-import type { UpdateFailureFact } from "./update-failure-facts.js";
 import { UPDATE_PREFLIGHT_DETAILS } from "./update-preflight-details.js";
 import { updateRecoverySchema } from "./update-recovery.js";
+import type { UpdateFailureFactSchema } from "./update-run-schema.js";
 
 type PublicFailureIdentifiers = Pick<
-  UpdateFailureFact,
+  z.infer<typeof UpdateFailureFactSchema>,
   "check" | "code" | "pluginId" | "errorName"
 >;
 

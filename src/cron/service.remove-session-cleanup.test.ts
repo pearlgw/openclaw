@@ -16,6 +16,7 @@ import { listOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.te
 import { clearCronJobActive, markCronJobActive } from "./active-jobs.js";
 import { CronService } from "./service.js";
 import { setupCronServiceSuite } from "./service.test-harness.js";
+import { hasPendingCronSessionCleanupForAgent } from "./service/locked.js";
 
 const gatewayTestState = vi.hoisted(() => ({
   callGateway: vi.fn(),
@@ -337,6 +338,7 @@ describe("CronService.remove session cleanup", () => {
 
     await vi.waitFor(() => {
       expect(loadExactSessionEntry({ storePath: sessionStorePath, sessionKey })).toBeUndefined();
+      expect(hasPendingCronSessionCleanupForAgent("main")).toBe(false);
     });
   });
 

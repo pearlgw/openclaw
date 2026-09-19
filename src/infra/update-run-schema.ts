@@ -29,6 +29,8 @@ const UpdateRollbackOutcomeSchema = z.object({
   reason: z.string().max(512),
 });
 
+export type UpdateRollbackOutcome = z.infer<typeof UpdateRollbackOutcomeSchema>;
+
 const text = z.string().max(UPDATE_RUN_TEXT_LIMIT);
 const timestamp = z.number().int().nonnegative();
 const version = z.object({

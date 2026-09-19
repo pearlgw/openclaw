@@ -1,11 +1,11 @@
 import { createUpdateErrorFact } from "../../infra/update-failure-facts.js";
 import { FreeBsdPkgOwnershipError } from "../../infra/update-freebsd-pkg-ownership.js";
 import type { UpdateRestartSentinelMeta } from "../../infra/update-restart-sentinel-payload.js";
-import { recordUpdateRunRecoveryDiagnostics } from "../../infra/update-run-diagnostics.js";
 import {
   finishUpdateRun,
   heartbeatUpdateRun,
   recordUpdateRunPhase,
+  recordUpdateRunDiagnostics,
   recordUpdateRunStep,
   recordUpdateRunVerification,
 } from "../../infra/update-run-ledger.js";
@@ -89,14 +89,7 @@ export async function recordUpdateRunResult(
     warn: (message: string) => void;
   },
 ): Promise<UpdateRunRecord> {
-  recordUpdateRunRecoveryDiagnostics(
-    runId,
-    {
-      ...(result.recovery ? { recovery: result.recovery } : {}),
-      ...(result.rollbackOutcome ? { rollbackOutcome: result.rollbackOutcome } : {}),
-    },
-    params.warn,
-  );
+  recordUpdateRunDiagnostics(runId, result, params.warn);
   if (result.status === "ok") {
     const activating = recordUpdateRunPhase(runId, "activating", {
       before: result.before,

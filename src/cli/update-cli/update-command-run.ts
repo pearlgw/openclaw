@@ -44,7 +44,6 @@ import {
   resolveManagedUpdateRequester,
 } from "../../infra/update-requester-authority.js";
 import { normalizeControlPlaneUpdateResult } from "../../infra/update-restart-sentinel-payload.js";
-import { recordUpdateRunRecoveryDiagnostics } from "../../infra/update-run-diagnostics.js";
 import { readUpdateRunDriver } from "../../infra/update-run-driver.js";
 import {
   adoptUpdateRun,
@@ -54,6 +53,7 @@ import {
   getUpdateRun,
   heartbeatUpdateRun,
   recordUpdateRunPhase,
+  recordUpdateRunDiagnostics,
   recordUpdateRunStep,
   recordUpdateRunVerification,
 } from "../../infra/update-run-ledger.js";
@@ -244,13 +244,6 @@ export async function admitUpdateCommandRun(params: {
     ledgerOptions,
   );
   const record = adoptUpdateRun(created.runId, ledgerOptions);
-  if (params.installKind) {
-    recordUpdateRunStep(
-      record.runId,
-      { step: "installation-inspection", status: "in_progress" },
-      ledgerOptions,
-    );
-  }
   const requester = resolveManagedUpdateRequester(record.origin.requester);
   const requesterAuthority = requester
     ? await createManagedUpdateRequesterAuthority(requester, env)
@@ -344,13 +337,15 @@ export function failUpdateCommandRun(
   }
   const step =
     active.steps.findLast((entry) => entry.status === "in_progress")?.step ?? active.phase;
-  recordUpdateRunStep(
+  const fact = createUpdateErrorFact(step, error, run.env);
+  recordUpdateRunDiagnostics(
     run.runId,
-    { step, status: "failed", failureFacts: [createUpdateErrorFact(step, error, run.env)] },
+    { failure: { step, detail: fact.message, failureFacts: [fact] } },
+    defaultRuntime.error,
     options,
   );
   if (!active.verification.rollbackOutcome) {
-    recordUpdateRunRecoveryDiagnostics(
+    recordUpdateRunDiagnostics(
       run.runId,
       (recorded) => ({
         rollbackOutcome:
@@ -483,17 +478,7 @@ export function completeUpdateCommandRun(
       { before: result.before, after: result.after },
       recordOptions,
     );
-    if (result.recovery || result.rollbackOutcome) {
-      recordUpdateRunRecoveryDiagnostics(
-        run.runId,
-        {
-          ...(result.recovery ? { recovery: result.recovery } : {}),
-          ...(result.rollbackOutcome ? { rollbackOutcome: result.rollbackOutcome } : {}),
-        },
-        defaultRuntime.error,
-        recordOptions,
-      );
-    }
+    recordUpdateRunDiagnostics(run.runId, result, defaultRuntime.error, recordOptions);
   }
   for (const step of result.steps.flatMap(updateRunStepsFromResultStep)) {
     recordUpdateRunStep(run.runId, step, recordOptions);

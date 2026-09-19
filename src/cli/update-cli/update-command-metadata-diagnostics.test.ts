@@ -21,21 +21,34 @@ import * as commandRun from "./update-command-run.js";
 import { updateCommand } from "./update-command.js";
 
 const { fixture } = installFreshUpdateFixture();
-it.each([false, true])(
-  "reports an unexpected target-resolution exception with diagnostic write failure=%s",
-  async (diagnosticWriteFails) => {
+it.each([
+  { diagnosticWriteFails: false, metadata: null },
+  { diagnosticWriteFails: true, metadata: null },
+  { diagnosticWriteFails: false, metadata: "constructor" },
+  { diagnosticWriteFails: false, metadata: "stack" },
+  { diagnosticWriteFails: false, metadata: "message" },
+] as const)(
+  "reports an unexpected exception with diagnostic write failure=$diagnosticWriteFails, metadata=$metadata",
+  async ({ diagnosticWriteFails, metadata }) => {
     openOpenClawStateDatabase();
     const detail =
       "Target response was invalid for alice@example.com host=private-gateway on 10.20.30.40 registry.private.example token=synthetic-secret at '/home/operator/private/npmrc'";
-    const error = new TypeError(
-      diagnosticWriteFails ? "" : detail,
-      diagnosticWriteFails ? { cause: new Error(detail) } : undefined,
-    );
+    const error = new TypeError(diagnosticWriteFails ? "" : detail, { cause: new Error(detail) });
     error.name = "PrivateTenantError";
     error.stack = `${error.name}: ${error.message}\n    at lookup (/home/operator/node_modules/dependency/index.js:2:3)\n    at privatePlugin (/home/operator/private-project/src/private-plugin.ts:4:3)\n    at resolveTargetVersion (${path.resolve("src/cli/update-cli/shared.ts")}:101:9)`;
+    if (metadata) {
+      Object.defineProperty(error, metadata, {
+        get() {
+          throw new Error("exception metadata is unavailable");
+        },
+      });
+    }
     vi.spyOn(shared, "resolveTargetVersion").mockRejectedValueOnce(error);
     if (diagnosticWriteFails) {
-      vi.spyOn(ledger, "recordUpdateRunVerification").mockImplementationOnce(() => {
+      vi.spyOn(
+        await import("../../infra/update-run-verification.js"),
+        "recordUpdateRunVerificationRecord",
+      ).mockImplementationOnce(() => {
         throw Object.assign(new Error("diagnostic ledger is read-only"), {
           code: "SQLITE_READONLY",
         });
@@ -43,8 +56,11 @@ it.each([false, true])(
     }
 
     await expect(
-      updateCommand({ tag: "2026.9.2", dryRun: true, json: true, restart: false }),
-    ).rejects.toBe(error);
+      updateCommand({ tag: "2026.9.2", dryRun: true, json: true, restart: false }).then(
+        () => false,
+        (caught: unknown) => caught === error,
+      ),
+    ).resolves.toBe(true);
     const recordedRun = ledger.listUpdateRuns()[0];
     expect(recordedRun).toBeDefined();
     const report = await prepareUpdateFailureReport({
@@ -57,12 +73,14 @@ it.each([false, true])(
     expect(report.body).toContain("Update target: 2026.9.2");
     expect(report.body).toContain("Update action: CLI command: openclaw update");
     expect(report.body).toContain("Installation method: npm-global");
-    expect(report.body).toContain("TypeError");
+    expect(report.body).toContain(metadata === "constructor" ? "(Error)" : "TypeError");
     expect(report.body).toContain("Target response was invalid");
-    expect(report.body).toContain("src/cli/update-cli/shared.ts:101:9");
+    if (!metadata) {
+      expect(report.body).toContain("src/cli/update-cli/shared.ts:101:9");
+    }
     if (diagnosticWriteFails) {
       expect(defaultRuntime.error).toHaveBeenCalledWith(
-        expect.stringContaining("Update recovery diagnostics could not be recorded"),
+        expect.stringContaining("Update diagnostics could not be recorded"),
       );
     } else {
       expect(report.body).toContain("Rollback outcome: not needed");

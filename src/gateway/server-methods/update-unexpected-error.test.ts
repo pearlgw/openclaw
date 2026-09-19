@@ -38,9 +38,9 @@ describe("update.run unexpected-error diagnostics", () => {
       };
       let restoreRecording: (() => void) | undefined;
       runGatewayUpdateMock.mockImplementationOnce(async () => {
-        const ledger = await import("../../infra/update-run-ledger.js");
-        const original = ledger.recordUpdateRunVerification;
-        const record = vi.spyOn(ledger, "recordUpdateRunVerification");
+        const verificationOwner = await import("../../infra/update-run-verification.js");
+        const original = verificationOwner.recordUpdateRunVerificationRecord;
+        const record = vi.spyOn(verificationOwner, "recordUpdateRunVerificationRecord");
         record.mockImplementation((runId, verification, options) => {
           if (
             "recovery" in verification ||
@@ -98,7 +98,7 @@ describe("update.run unexpected-error diagnostics", () => {
       });
       if (diagnostics || sentinelFailure) {
         expect(logGateway.warn).toHaveBeenCalledWith(
-          expect.stringContaining("Update recovery diagnostics could not be recorded"),
+          expect.stringContaining("Update diagnostics could not be recorded"),
         );
       } else {
         expect(logGateway.warn).not.toHaveBeenCalled();

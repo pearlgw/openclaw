@@ -1,5 +1,5 @@
 import { expectDefined } from "@openclaw/normalization-core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import {
   createOpenClawTestState,
@@ -14,8 +14,7 @@ import {
   listUpdateRuns,
   recordUpdateRunVerification,
 } from "./update-run-ledger.js";
-import { runAutoUpdateCommand } from "./update-startup-auto-run.js";
-import { runCampaignUpdate } from "./update-startup-campaign-run.js";
+import { runAutoUpdateCommand, runCampaignUpdate } from "./update-startup-auto-run.js";
 
 const { cancel, start, transfer, restart } = vi.hoisted(() => ({
   cancel:
@@ -92,15 +91,18 @@ describe("automatic campaign handoff failure", () => {
   it("cancels a rejected transfer when diagnostic persistence fails", async () => {
     const run = createUpdateRun({ trigger: "campaign", target: { kind: "package" } });
     const log = { info: vi.fn() };
-    transfer.mockRejectedValueOnce(new Error("pipe closed"));
     cancel.mockResolvedValueOnce("restored-in-process");
-    const record = vi
-      .spyOn(await import("./update-run-ledger.js"), "recordUpdateRunStep")
-      .mockImplementationOnce(() => {
-        throw Object.assign(new Error("diagnostic ledger is read-only"), {
-          code: "SQLITE_READONLY",
+    let record: MockInstance<typeof import("./update-run-codec.js").encodeRun> | undefined;
+    transfer.mockImplementationOnce(async () => {
+      record = vi
+        .spyOn(await import("./update-run-codec.js"), "encodeRun")
+        .mockImplementationOnce(() => {
+          throw Object.assign(new Error("diagnostic ledger is read-only"), {
+            code: "SQLITE_READONLY",
+          });
         });
-      });
+      throw new Error("pipe closed");
+    });
     try {
       const outcome = await runAutoUpdateCommand(
         {
@@ -130,11 +132,10 @@ describe("automatic campaign handoff failure", () => {
         },
       });
       expect(log.info).toHaveBeenCalledWith(
-        "automatic update failure diagnostics could not be recorded",
-        expect.objectContaining({ code: "SQLITE_READONLY" }),
+        expect.stringContaining("Update diagnostics could not be recorded (SQLITE_READONLY)"),
       );
     } finally {
-      record.mockRestore();
+      record?.mockRestore();
     }
   });
 
@@ -143,6 +144,7 @@ describe("automatic campaign handoff failure", () => {
     { throws: true, diagnosticFailure: null },
     { throws: true, diagnosticFailure: "read" },
     { throws: true, diagnosticFailure: "write" },
+    { throws: true, diagnosticFailure: "stale" },
   ] as const)(
     "preserves cause and verified recovery when transfer throws=$throws and diagnostics=$diagnosticFailure",
     async ({ throws, diagnosticFailure }) => {
@@ -152,8 +154,10 @@ describe("automatic campaign handoff failure", () => {
         transfer.mockResolvedValueOnce(false);
       }
       let stepsBeforeCancellation: ReturnType<typeof listUpdateRuns>[number]["steps"] = [];
+      let beforeCancellation: ReturnType<typeof listUpdateRuns>[number] | undefined;
       cancel.mockImplementationOnce(async () => {
         const run = expectDefined(listUpdateRuns()[0], "admitted campaign run");
+        beforeCancellation = run;
         stepsBeforeCancellation = run.steps;
         recordUpdateRunVerification(run.runId, {
           rollbackOutcome: {
@@ -181,18 +185,21 @@ describe("automatic campaign handoff failure", () => {
             runAuto: async (params) => {
               const outcome = await runAutoUpdateCommand(params, log);
               if (diagnosticFailure) {
-                const ledger = await import("./update-run-ledger.js");
+                const reader = await import("./update-run-reader.js");
+                const verificationOwner = await import("./update-run-verification.js");
                 const failed = () => {
                   throw Object.assign(new Error("summary diagnostics unavailable"), {
                     code: "SQLITE_READONLY",
                   });
                 };
                 const fault =
-                  diagnosticFailure === "read"
-                    ? vi.spyOn(ledger, "getUpdateRun").mockImplementationOnce(failed)
-                    : vi
-                        .spyOn(ledger, "recordUpdateRunVerification")
-                        .mockImplementationOnce(failed);
+                  diagnosticFailure === "stale"
+                    ? vi.spyOn(reader, "getUpdateRun").mockReturnValueOnce(beforeCancellation)
+                    : diagnosticFailure === "read"
+                      ? vi.spyOn(reader, "readUpdateRunRecord").mockImplementationOnce(failed)
+                      : vi
+                          .spyOn(verificationOwner, "recordUpdateRunVerificationRecord")
+                          .mockImplementationOnce(failed);
                 restoreDiagnosticFailure = () => fault.mockRestore();
               }
               return outcome;
@@ -248,9 +255,9 @@ describe("automatic campaign handoff failure", () => {
         );
         expect(report.body).toContain("managed-service");
         expect(report.body).toContain("Rollback outcome: not needed");
-        if (diagnosticFailure) {
+        if (diagnosticFailure && diagnosticFailure !== "stale") {
           expect(log.info).toHaveBeenCalledWith(
-            expect.stringContaining("Update recovery diagnostics could not be recorded"),
+            expect.stringContaining("Update diagnostics could not be recorded"),
           );
         }
       } finally {
@@ -260,52 +267,69 @@ describe("automatic campaign handoff failure", () => {
     },
   );
 
-  it("preserves the original campaign exception when reading its phase fails", async () => {
-    const campaign = createApplyingCampaign();
-    const original = new Error("automatic update failed");
-    const log = { info: vi.fn() };
-    let restoreRead: (() => void) | undefined;
-    try {
-      await expect(
-        runCampaignUpdate({
-          channel: "beta",
-          mode: "npm",
-          version: "2.0.0-beta.1",
-          tag: "beta",
-          forced: false,
-          root: "/opt/openclaw",
-          log,
-          canApply: () => true,
-          campaign,
-          onAttempt: () => {},
-          runAuto: async () => {
-            const read = vi
-              .spyOn(await import("./update-run-ledger.js"), "getUpdateRun")
-              .mockImplementationOnce(() => {
-                throw new Error("phase lookup failed");
-              });
-            restoreRead = () => read.mockRestore();
-            throw original;
-          },
-        }),
-      ).rejects.toBe(original);
-      const run = expectDefined(listUpdateRuns()[0], "failed campaign run");
-      expect(run).toMatchObject({
-        status: "failed",
-        reason: "unexpected-error",
-        steps: expect.arrayContaining([
-          expect.objectContaining({
-            step: "requested",
-            failureFacts: [expect.objectContaining({ message: "automatic update failed" })],
+  it.each(["read", "write"])(
+    "preserves the original campaign exception when diagnostics %s fails",
+    async (failure) => {
+      const campaign = createApplyingCampaign();
+      const original = new Error("automatic update failed");
+      const log = { info: vi.fn() };
+      let restoreRead: (() => void) | undefined;
+      try {
+        await expect(
+          runCampaignUpdate({
+            channel: "beta",
+            mode: "npm",
+            version: "2.0.0-beta.1",
+            tag: "beta",
+            forced: false,
+            root: "/opt/openclaw",
+            log,
+            canApply: () => true,
+            campaign,
+            onAttempt: () => {},
+            runAuto: async () => {
+              const fail = () => {
+                throw new Error("diagnostic persistence unavailable");
+              };
+              const read =
+                failure === "read"
+                  ? vi
+                      .spyOn(await import("./update-run-ledger.js"), "getUpdateRun")
+                      .mockImplementationOnce(fail)
+                  : vi
+                      .spyOn(await import("./update-run-codec.js"), "encodeRun")
+                      .mockImplementationOnce(fail);
+              restoreRead = () => read.mockRestore();
+              throw original;
+            },
           }),
-        ]),
-      });
-      expect(log.info).toHaveBeenCalledWith(
-        expect.stringContaining("Update history could not be read"),
-      );
-    } finally {
-      restoreRead?.();
-      campaign.clear();
-    }
-  });
+        ).rejects.toBe(original);
+        const run = expectDefined(listUpdateRuns()[0], "failed campaign run");
+        expect(run).toMatchObject({
+          status: "failed",
+          reason: "unexpected-error",
+          ...(failure === "read"
+            ? {
+                steps: expect.arrayContaining([
+                  expect.objectContaining({
+                    step: "requested",
+                    failureFacts: [expect.objectContaining({ message: "automatic update failed" })],
+                  }),
+                ]),
+              }
+            : {}),
+        });
+        expect(log.info).toHaveBeenCalledWith(
+          expect.stringContaining(
+            failure === "read"
+              ? "Update history could not be read"
+              : "Update diagnostics could not be recorded",
+          ),
+        );
+      } finally {
+        restoreRead?.();
+        campaign.clear();
+      }
+    },
+  );
 });

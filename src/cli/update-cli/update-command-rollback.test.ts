@@ -202,6 +202,7 @@ describe("verified package rollback", () => {
         status: "error",
         reason: "rollback-project-changed",
         root: candidateRoot,
+        rollbackOutcome: { status: duringStop ? "failed" : "not-attempted" },
       });
       expect(rollback).toHaveBeenCalledTimes(duringStop ? 1 : 0);
       expect(mocks.stop).toHaveBeenCalledTimes(duringStop ? 1 : 0);
@@ -211,6 +212,7 @@ describe("verified package rollback", () => {
       expect(row).toMatchObject({
         status: "failed",
         reason: "rollback-project-changed",
+        verification: { rollbackOutcome: outcome.result.rollbackOutcome },
         steps: expect.arrayContaining([
           expect.objectContaining({ step: "package rollback", status: "failed", detail }),
         ]),
@@ -325,6 +327,10 @@ describe("verified package rollback", () => {
         });
         expect(enabled).toBe(true);
         expect(outcome.rolledBack).toBe(healthy);
+        expect(outcome.result.rollbackOutcome).toEqual({
+          status: "succeeded",
+          reason: "Previous package and configuration restored",
+        });
         expect(outcome.result.recovery).toMatchObject({
           packageRollbackVerified: true,
           version: "2026.9.1",

@@ -52,13 +52,13 @@ import {
   normalizeControlPlaneUpdateResult,
   type UpdateRestartSentinelMeta,
 } from "../../infra/update-restart-sentinel-payload.js";
-import { recordUpdateRunRecoveryDiagnostics } from "../../infra/update-run-diagnostics.js";
 import {
   adoptUpdateRun,
   createUpdateRun,
   finishUpdateRun,
   getUpdateRun,
   recordUpdateRunPhase,
+  recordUpdateRunDiagnostics,
   recordUpdateRunStep,
   recordUpdateRunVerification,
 } from "../../infra/update-run-ledger.js";
@@ -605,7 +605,7 @@ export const updateHandlers: GatewayRequestHandlers = {
         recordLatestUpdateRestartSentinel(payload);
       } catch (error) {
         if (result.status === "ok" && handoff?.status !== "started") {
-          recordUpdateRunRecoveryDiagnostics(
+          recordUpdateRunDiagnostics(
             runId,
             {
               rollbackOutcome: {

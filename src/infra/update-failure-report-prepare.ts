@@ -363,18 +363,8 @@ export async function prepareUpdateFailureReport(
   const phase = sanitizeFactIdentifier(steps.at(-1)?.name ?? "not-recorded", context);
   const recovery = resolveRecoveryOutcome(input, context);
   const rollback = input.result.rollbackOutcome ?? recordedRun?.verification?.rollbackOutcome;
-  const action = input.action ?? recordedRun?.trigger;
-  const installation =
-    recordedRun?.target?.installationMethod ??
-    (
-      {
-        git: "git-checkout",
-        npm: "npm-global",
-        pnpm: "pnpm-global",
-        bun: "bun-global",
-        unknown: undefined,
-      } as const
-    )[input.result.mode];
+  const action = recordedRun?.trigger ?? input.action;
+  const installation = recordedRun?.target?.installationMethod;
   const verification = recordedRun?.verification;
   const identity = verification
     ? formatUpdateRunIdentity(verification, recordedRun?.after ?? input.result.after ?? {})

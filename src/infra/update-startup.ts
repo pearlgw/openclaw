@@ -52,7 +52,7 @@ import {
 import { devUpdateTargetFromGitTarget } from "./update-dev-target.js";
 import { updateInstallRootsMatch } from "./update-install-root.js";
 import { resolveStartupInstallStatus } from "./update-install-status.js";
-import { runCampaignUpdate, type AutoUpdateRunner } from "./update-startup-campaign-run.js";
+import { runCampaignUpdate, type AutoUpdateRunner } from "./update-startup-auto-run.js";
 import {
   getUpdateSchedule,
   resetUpdateStatusState,

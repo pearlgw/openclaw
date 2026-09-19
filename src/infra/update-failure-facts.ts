@@ -11,13 +11,27 @@ import type { UpdateFailureFactSchema } from "./update-run-schema.js";
 
 export type UpdateFailureFact = z.infer<typeof UpdateFailureFactSchema>;
 
+function readErrorMetadata<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 export function createUpdateErrorFact(
   check: string,
   error: unknown,
   env: NodeJS.ProcessEnv = process.env,
 ): UpdateFailureFact {
-  const name = error instanceof Error ? error.constructor.name : readErrorName(error);
-  const errorName = /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/u.test(name) ? name : "Error";
+  const errorObject = readErrorMetadata(() => (error instanceof Error ? error : undefined));
+  const name = readErrorMetadata(() =>
+    errorObject ? errorObject.constructor.name : readErrorName(error),
+  );
+  const errorName =
+    typeof name === "string" && /^[A-Za-z_$][A-Za-z0-9_$]{0,79}$/u.test(name) ? name : "Error";
+  const message = readErrorMetadata(() => errorObject?.message);
+  const stack = readErrorMetadata(() => errorObject?.stack);
   const code = extractErrorCode(error);
   let root: string | null = null;
   try {
@@ -29,9 +43,9 @@ export function createUpdateErrorFact(
     ? [`${root.replaceAll("\\", "/")}/`, pathToFileURL(`${root}${path.sep}`).href]
     : [];
   const location =
-    error instanceof Error
-      ? error.stack
-          ?.split("\n")
+    typeof stack === "string"
+      ? stack
+          .split("\n")
           .slice(1)
           .flatMap((frame) => {
             const file = /((?:file:\/\/)?(?:\/|[A-Z]:[\\/])[^()\r\n]+:\d+:\d+)\)?$/u
@@ -56,10 +70,15 @@ export function createUpdateErrorFact(
       errorName,
       location: location ?? null,
       message: formatErrorMessage(
-        error instanceof Error && !error.message
-          ? new Error(isPublicUpdateFailureCode(errorName) ? errorName : "[redacted-error-class]", {
-              cause: error,
-            })
+        errorObject
+          ? new Error(
+              typeof message === "string" && message
+                ? message
+                : isPublicUpdateFailureCode(errorName)
+                  ? errorName
+                  : "[redacted-error-class]",
+              { cause: error },
+            )
           : error,
       ),
     },

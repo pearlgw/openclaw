@@ -463,7 +463,7 @@ it.skipIf(process.platform === "win32").each([
       const opts = { dryRun: true };
       const mode = ${JSON.stringify(mode)};
       if (mode === 'inherited') process.env.OPENCLAW_UPDATE_RUN_ID = createUpdateRun({trigger:'cli'}).runId;
-      const run = await admitUpdateCommandRun({ opts, root: ${JSON.stringify(root)} });
+      const run = await admitUpdateCommandRun({ opts, root: ${JSON.stringify(root)}, installKind: "package" });
       await withUpdatePreviewSignals({ ...opts, run }, async () => {
         const sibling = createUpdateRun({ trigger: 'cli' });
         if (mode === 'repeat') {

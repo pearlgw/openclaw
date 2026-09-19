@@ -119,13 +119,9 @@ export async function updateGitCheckout(params: {
   let candidateTransfer: Awaited<ReturnType<typeof prepareGitCandidateTransfer>>;
   let stateMigrationStarted = false;
   let recovery = await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
-  let rollbackOutcome: UpdateRunResult["rollbackOutcome"] = {
+  let rollbackOutcome: NonNullable<UpdateRunResult["rollbackOutcome"]> = {
     status: "not-needed",
     reason: "Installed checkout was not changed",
-  };
-  const recordRollbackOutcome = (outcome: NonNullable<UpdateRunResult["rollbackOutcome"]>) => {
-    rollbackOutcome = outcome;
-    recordGitRollbackOutcome({ outcome, progress: opts.progress, root: gitRoot, steps });
   };
   const prepareMutation = async (revision: string, root = gitRoot, runner = runCommand) => {
     if (mutationPrepared) {
@@ -293,10 +289,10 @@ export async function updateGitCheckout(params: {
       }
       // Doctor can migrate state before failing. Restoring code cannot undo that boundary.
       if (stateMigrationStarted) {
-        recordRollbackOutcome({
+        rollbackOutcome = {
           status: "not-attempted",
           reason: "State migration started; restoring code alone cannot restore operator state",
-        });
+        };
         return buildError(reason);
       }
       const sourceRestored = await rollback();
@@ -319,23 +315,29 @@ export async function updateGitCheckout(params: {
         : !runtimeRestored
           ? { serviceRestartSafe: false, reason: "runtime-verification-failed" }
           : await verifyGitUpdateRecovery({ root: gitRoot, sha: beforeSha });
-      recordRollbackOutcome({
-        status:
-          sourceRestored && runtimeRestored && recovery.serviceRestartSafe ? "succeeded" : "failed",
-        reason:
-          sourceRestored && runtimeRestored && recovery.serviceRestartSafe
-            ? "Previous checkout and runtime restored and verified"
-            : "Previous checkout or runtime restoration could not be verified",
-      });
+      const restored = sourceRestored && runtimeRestored && recovery.serviceRestartSafe;
+      rollbackOutcome = {
+        status: restored ? "succeeded" : "failed",
+        reason: restored
+          ? "Previous checkout and runtime restored and verified"
+          : "Previous checkout or runtime restoration could not be verified",
+      };
       return buildError(reason);
     } catch (error) {
       if (sourceMutationStarted && !stateMigrationStarted) {
-        recordRollbackOutcome({
+        rollbackOutcome = {
           status: "failed",
           reason: "Rollback threw before restoration could be verified",
-        });
+        };
       }
       throw error;
+    } finally {
+      recordGitRollbackOutcome({
+        outcome: rollbackOutcome,
+        progress: opts.progress,
+        root: gitRoot,
+        steps,
+      });
     }
   };
   const runRequiredStep = async (name: string, argv: string[], reason: string) => {
